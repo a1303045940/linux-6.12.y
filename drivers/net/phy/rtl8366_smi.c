@@ -12,15 +12,13 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/delay.h>
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
 #include <linux/spinlock.h>
 #include <linux/skbuff.h>
 #include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/of_gpio.h>
-#include <linux/rtl8366.h>
 #include <linux/version.h>
 #include <linux/of_mdio.h>
+#include <linux/platform_device.h>
 
 #ifdef CONFIG_RTL8366_SMI_DEBUG_FS
 #include <linux/debugfs.h>
@@ -40,86 +38,86 @@ static inline void rtl8366_smi_clk_delay(struct rtl8366_smi *smi)
 
 static void rtl8366_smi_start(struct rtl8366_smi *smi)
 {
-	unsigned int sda = smi->gpio_sda;
-	unsigned int sck = smi->gpio_sck;
+	struct gpio_desc *sda = smi->gpio_sda;
+	struct gpio_desc *sck = smi->gpio_sck;
 
 	/*
 	 * Set GPIO pins to output mode, with initial state:
 	 * SCK = 0, SDA = 1
 	 */
-	gpio_direction_output(sck, 0);
-	gpio_direction_output(sda, 1);
+	gpiod_direction_output_raw(sck, 0);
+	gpiod_direction_output_raw(sda, 1);
 	rtl8366_smi_clk_delay(smi);
 
 	/* CLK 1: 0 -> 1, 1 -> 0 */
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sck, 1);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 0);
+	gpiod_set_raw_value(sck, 0);
 	rtl8366_smi_clk_delay(smi);
 
 	/* CLK 2: */
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sck, 1);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sda, 0);
+	gpiod_set_raw_value(sda, 0);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 0);
+	gpiod_set_raw_value(sck, 0);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sda, 1);
+	gpiod_set_raw_value(sda, 1);
 }
 
 static void rtl8366_smi_stop(struct rtl8366_smi *smi)
 {
-	unsigned int sda = smi->gpio_sda;
-	unsigned int sck = smi->gpio_sck;
+	struct gpio_desc *sda = smi->gpio_sda;
+	struct gpio_desc *sck = smi->gpio_sck;
 
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sda, 0);
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sda, 0);
+	gpiod_set_raw_value(sck, 1);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sda, 1);
+	gpiod_set_raw_value(sda, 1);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sck, 1);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 0);
+	gpiod_set_raw_value(sck, 0);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sck, 1);
 
 	/* add a click */
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 0);
+	gpiod_set_raw_value(sck, 0);
 	rtl8366_smi_clk_delay(smi);
-	gpio_set_value(sck, 1);
+	gpiod_set_raw_value(sck, 1);
 
 	/* set GPIO pins to input mode */
-	gpio_direction_input(sda);
-	gpio_direction_input(sck);
+	gpiod_direction_input(sda);
+	gpiod_direction_input(sck);
 }
 
 static void rtl8366_smi_write_bits(struct rtl8366_smi *smi, u32 data, u32 len)
 {
-	unsigned int sda = smi->gpio_sda;
-	unsigned int sck = smi->gpio_sck;
+	struct gpio_desc *sda = smi->gpio_sda;
+	struct gpio_desc *sck = smi->gpio_sck;
 
 	for (; len > 0; len--) {
 		rtl8366_smi_clk_delay(smi);
 
 		/* prepare data */
-		gpio_set_value(sda, !!(data & ( 1 << (len - 1))));
+		gpiod_set_raw_value(sda, !!(data & (1 << (len - 1))));
 		rtl8366_smi_clk_delay(smi);
 
 		/* clocking */
-		gpio_set_value(sck, 1);
+		gpiod_set_raw_value(sck, 1);
 		rtl8366_smi_clk_delay(smi);
-		gpio_set_value(sck, 0);
+		gpiod_set_raw_value(sck, 0);
 	}
 }
 
 static void rtl8366_smi_read_bits(struct rtl8366_smi *smi, u32 len, u32 *data)
 {
-	unsigned int sda = smi->gpio_sda;
-	unsigned int sck = smi->gpio_sck;
+	struct gpio_desc *sda = smi->gpio_sda;
+	struct gpio_desc *sck = smi->gpio_sck;
 
-	gpio_direction_input(sda);
+	gpiod_direction_input(sda);
 
 	for (*data = 0; len > 0; len--) {
 		u32 u;
@@ -127,15 +125,15 @@ static void rtl8366_smi_read_bits(struct rtl8366_smi *smi, u32 len, u32 *data)
 		rtl8366_smi_clk_delay(smi);
 
 		/* clocking */
-		gpio_set_value(sck, 1);
+		gpiod_set_raw_value(sck, 1);
 		rtl8366_smi_clk_delay(smi);
-		u = !!gpio_get_value(sda);
-		gpio_set_value(sck, 0);
+		u = !!gpiod_get_raw_value(sda);
+		gpiod_set_raw_value(sck, 0);
 
 		*data |= (u << (len - 1));
 	}
 
-	gpio_direction_output(sda, 0);
+	gpiod_direction_output_raw(sda, 0);
 }
 
 static int rtl8366_smi_wait_for_ack(struct rtl8366_smi *smi)
@@ -855,44 +853,77 @@ static ssize_t rtl8366_write_debugfs_reg(struct file *file,
 }
 
 static ssize_t rtl8366_read_debugfs_mibs(struct file *file,
-					 char __user *user_buf,
-					 size_t count, loff_t *ppos)
+					 char __user *user_buf, size_t count,
+					 loff_t *ppos)
 {
 	struct rtl8366_smi *smi = file->private_data;
 	int i, j, len = 0;
-	char *buf = smi->buf;
+	char *buf;
+	size_t buf_size;
+	ssize_t ret_val;
 
-	len += snprintf(buf + len, sizeof(smi->buf) - len, "%-36s",
-			"Counter");
+	/* 计算需要的缓冲区大小：
+	 * 每行：计数器名称(36) + 空格(1) + 每个端口(20字符) * 端口数 + 换行符(1)
+	 * 行数：MIB计数器数量 + 1（标题行）
+	 */
+	buf_size = (36 + 1 + smi->num_ports * 20 + 1) *
+		   (smi->num_mib_counters + 1);
+
+	/* 添加一些额外的空间以防万一 */
+	buf_size += 100;
+
+	/* 动态分配缓冲区 */
+	buf = kvmalloc(buf_size, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	/* 打印表头 */
+	len += snprintf(buf + len, buf_size - len, "%-36s", "Counter");
 
 	for (i = 0; i < smi->num_ports; i++) {
 		char port_buf[10];
 
 		snprintf(port_buf, sizeof(port_buf), "Port %d", i);
-		len += snprintf(buf + len, sizeof(smi->buf) - len, " %12s",
-				port_buf);
+		len += snprintf(buf + len, buf_size - len, " %12s", port_buf);
 	}
-	len += snprintf(buf + len, sizeof(smi->buf) - len, "\n");
+	len += snprintf(buf + len, buf_size - len, "\n");
 
+	/* 打印MIB计数器数据 */
 	for (i = 0; i < smi->num_mib_counters; i++) {
-		len += snprintf(buf + len, sizeof(smi->buf) - len, "%-36s ",
+		len += snprintf(buf + len, buf_size - len, "%-36s ",
 				smi->mib_counters[i].name);
+
 		for (j = 0; j < smi->num_ports; j++) {
 			unsigned long long counter = 0;
 
-			if (!smi->ops->get_mib_counter(smi, i, j, &counter))
-				len += snprintf(buf + len,
-						sizeof(smi->buf) - len,
+			if (!smi->ops->get_mib_counter(smi, i, j, &counter)) {
+				len += snprintf(buf + len, buf_size - len,
 						"%12llu ", counter);
-			else
-				len += snprintf(buf + len,
-						sizeof(smi->buf) - len,
+			} else {
+				len += snprintf(buf + len, buf_size - len,
 						"%12s ", "error");
+			}
 		}
-		len += snprintf(buf + len, sizeof(smi->buf) - len, "\n");
+		len += snprintf(buf + len, buf_size - len, "\n");
+
+		/* 简单检查，确保不会溢出（理论上不应该发生） */
+		if (len >= buf_size - 100) {
+			/* 预留100字节空间用于添加截断信息 */
+			break;
+		}
 	}
 
-	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+	/* 如果缓冲区接近满，添加截断信息 */
+	if (len >= buf_size - 50) {
+		len += snprintf(
+			buf + len, buf_size - len,
+			"\n[Output truncated, buffer size: %zu bytes]\n",
+			buf_size);
+	}
+
+	ret_val = simple_read_from_buffer(user_buf, count, ppos, buf, len);
+	kvfree(buf);
+	return ret_val;
 }
 
 static const struct file_operations fops_rtl8366_regs = {
@@ -943,6 +974,7 @@ static void rtl8366_debugfs_init(struct rtl8366_smi *smi)
 
 	debugfs_create_x16("reg", S_IRUGO | S_IWUSR, root,
 				  &smi->dbg_reg);
+
 	node = debugfs_create_file("val", S_IRUGO | S_IWUSR, root, smi,
 				   &fops_rtl8366_regs);
 	if (!node) {
@@ -1000,12 +1032,7 @@ static inline void rtl8366_debugfs_remove(struct rtl8366_smi *smi) {}
 static int rtl8366_smi_mii_init(struct rtl8366_smi *smi)
 {
 	int ret;
-
-#ifdef CONFIG_OF
 	struct device_node *np = NULL;
-
-	np = of_get_child_by_name(smi->parent->of_node, "mdio-bus");
-#endif
 
 	smi->mii_bus = mdiobus_alloc();
 	if (smi->mii_bus == NULL) {
@@ -1022,11 +1049,10 @@ static int rtl8366_smi_mii_init(struct rtl8366_smi *smi)
 	smi->mii_bus->parent = smi->parent;
 	smi->mii_bus->phy_mask = ~(0x1f);
 
-#ifdef CONFIG_OF
+	np = of_get_child_by_name(smi->parent->of_node, "mdio-bus");
 	if (np)
 		ret = of_mdiobus_register(smi->mii_bus, np);
 	else
-#endif
 		ret = mdiobus_register(smi->mii_bus);
 
 	if (ret)
@@ -1356,24 +1382,6 @@ EXPORT_SYMBOL_GPL(rtl8366_smi_alloc);
 
 static int __rtl8366_smi_init(struct rtl8366_smi *smi, const char *name)
 {
-	int err;
-
-	if (!smi->ext_mbus) {
-		err = gpio_request(smi->gpio_sda, name);
-		if (err) {
-			printk(KERN_ERR "rtl8366_smi: gpio_request failed for %u, err=%d\n",
-				smi->gpio_sda, err);
-			goto err_out;
-		}
-
-		err = gpio_request(smi->gpio_sck, name);
-		if (err) {
-			printk(KERN_ERR "rtl8366_smi: gpio_request failed for %u, err=%d\n",
-				smi->gpio_sck, err);
-			goto err_free_sda;
-		}
-	}
-
 	spin_lock_init(&smi->lock);
 
 	/* start the switch */
@@ -1383,61 +1391,12 @@ static int __rtl8366_smi_init(struct rtl8366_smi *smi, const char *name)
 	}
 
 	return 0;
-
- err_free_sda:
-	gpio_free(smi->gpio_sda);
- err_out:
-	return err;
 }
 
 static void __rtl8366_smi_cleanup(struct rtl8366_smi *smi)
 {
 	if (smi->hw_reset)
 		smi->hw_reset(smi, true);
-
-	if (!smi->ext_mbus) {
-		gpio_free(smi->gpio_sck);
-		gpio_free(smi->gpio_sda);
-	}
-}
-
-enum rtl8366_type rtl8366_smi_detect(struct rtl8366_platform_data *pdata)
-{
-	static struct rtl8366_smi smi;
-	enum rtl8366_type type = RTL8366_TYPE_UNKNOWN;
-	u32 reg = 0;
-
-	memset(&smi, 0, sizeof(smi));
-	smi.gpio_sda = pdata->gpio_sda;
-	smi.gpio_sck = pdata->gpio_sck;
-	smi.clk_delay = 10;
-	smi.cmd_read  = 0xa9;
-	smi.cmd_write = 0xa8;
-
-	if (__rtl8366_smi_init(&smi, "rtl8366"))
-		goto out;
-
-	if (rtl8366_smi_read_reg(&smi, 0x5c, &reg))
-		goto cleanup;
-
-	switch(reg) {
-	case 0x6027:
-		printk("Found an RTL8366S switch\n");
-		type = RTL8366_TYPE_S;
-		break;
-	case 0x5937:
-		printk("Found an RTL8366RB switch\n");
-		type = RTL8366_TYPE_RB;
-		break;
-	default:
-		printk("Found an Unknown RTL8366 switch (id=0x%04x)\n", reg);
-		break;
-	}
-
-cleanup:
-	__rtl8366_smi_cleanup(&smi);
-out:
-	return type;
 }
 
 int rtl8366_smi_init(struct rtl8366_smi *smi)
@@ -1451,10 +1410,7 @@ int rtl8366_smi_init(struct rtl8366_smi *smi)
 	if (err)
 		goto err_out;
 
-	if (!smi->ext_mbus)
-		dev_info(smi->parent, "using GPIO pins %u (SDA) and %u (SCK)\n",
-			 smi->gpio_sda, smi->gpio_sck);
-	else
+	if (smi->ext_mbus)
 		dev_info(smi->parent, "using MDIO bus '%s'\n", smi->ext_mbus->name);
 
 	err = smi->ops->detect(smi);
@@ -1507,7 +1463,6 @@ void rtl8366_smi_cleanup(struct rtl8366_smi *smi)
 }
 EXPORT_SYMBOL_GPL(rtl8366_smi_cleanup);
 
-#ifdef CONFIG_OF
 static void rtl8366_smi_reset(struct rtl8366_smi *smi, bool active)
 {
 	if (active)
@@ -1518,14 +1473,13 @@ static void rtl8366_smi_reset(struct rtl8366_smi *smi, bool active)
 
 static int rtl8366_smi_probe_of(struct platform_device *pdev, struct rtl8366_smi *smi)
 {
-	int sck = of_get_named_gpio(pdev->dev.of_node, "gpio-sck", 0);
-	int sda = of_get_named_gpio(pdev->dev.of_node, "gpio-sda", 0);
+	struct gpio_desc *sck, *sda;
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *mdio_node;
 
 	mdio_node = of_parse_phandle(np, "mii-bus", 0);
 	if (!mdio_node) {
-		dev_err(&pdev->dev, "cannot find mdio node phandle");
+		dev_info(&pdev->dev, "cannot find mdio node phandle");
 		goto try_gpio;
 	}
 
@@ -1533,7 +1487,7 @@ static int rtl8366_smi_probe_of(struct platform_device *pdev, struct rtl8366_smi
 	if (!smi->ext_mbus) {
 		dev_info(&pdev->dev,
 			"cannot find mdio bus from bus handle (yet)");
-		goto try_gpio;
+		return -EPROBE_DEFER;
 	}
 
 	if (of_property_read_u32(np, "phy-id", &smi->phy_id))
@@ -1542,14 +1496,17 @@ static int rtl8366_smi_probe_of(struct platform_device *pdev, struct rtl8366_smi
 	return 0;
 
 try_gpio:
-	if (!gpio_is_valid(sck) || !gpio_is_valid(sda)) {
-		if (!mdio_node) {
-			dev_err(&pdev->dev, "gpios missing in devictree\n");
-			return -EINVAL;
-		} else {
-			return -EPROBE_DEFER;
-		}
-	}
+	sck = devm_gpiod_get(&pdev->dev, "sck", GPIOD_IN);
+	if (IS_ERR(sck))
+		return dev_err_probe(&pdev->dev, PTR_ERR(sck),
+				     "failed to request sck-gpio\n");
+	gpiod_set_consumer_name(sck, "rtl836x-sck");
+
+	sda = devm_gpiod_get(&pdev->dev, "sda", GPIOD_IN);
+	if (IS_ERR(sda))
+		return dev_err_probe(&pdev->dev, PTR_ERR(sda),
+				     "failed to request sda-gpio\n");
+	gpiod_set_consumer_name(sda, "rtl836x-sda");
 
 	smi->gpio_sda = sda;
 	smi->gpio_sck = sck;
@@ -1559,30 +1516,6 @@ try_gpio:
 
 	return 0;
 }
-#else
-static inline int rtl8366_smi_probe_of(struct platform_device *pdev, struct rtl8366_smi *smi)
-{
-	return -ENODEV;
-}
-#endif
-
-static int rtl8366_smi_probe_plat(struct platform_device *pdev, struct rtl8366_smi *smi)
-{
-	struct rtl8366_platform_data *pdata = pdev->dev.platform_data;
-
-	if (!pdev->dev.platform_data) {
-		dev_err(&pdev->dev, "no platform data specified\n");
-		return -EINVAL;
-	}
-
-	smi->gpio_sda = pdata->gpio_sda;
-	smi->gpio_sck = pdata->gpio_sck;
-	smi->hw_reset = pdata->hw_reset;
-	smi->phy_id = MDC_REALTEK_PHY_ADDR;
-
-	return 0;
-}
-
 
 struct rtl8366_smi *rtl8366_smi_probe(struct platform_device *pdev)
 {
@@ -1593,11 +1526,7 @@ struct rtl8366_smi *rtl8366_smi_probe(struct platform_device *pdev)
 	if (!smi)
 		return NULL;
 
-	if (pdev->dev.of_node)
-		err = rtl8366_smi_probe_of(pdev, smi);
-	else
-		err = rtl8366_smi_probe_plat(pdev, smi);
-
+	err = rtl8366_smi_probe_of(pdev, smi);
 	if (err)
 		goto free_smi;
 

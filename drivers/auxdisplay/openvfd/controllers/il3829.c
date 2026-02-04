@@ -385,7 +385,6 @@ static void transpose_rect(struct rect *rect)
 	rect->height = tmp.width * 8;
 }
 
-extern void transpose_buffer(unsigned char *buffer, const struct rect *rect);
 static void il3829_print_string(const unsigned char *buffer, const struct rect *_rect)
 {
 	struct write_list *new_write;

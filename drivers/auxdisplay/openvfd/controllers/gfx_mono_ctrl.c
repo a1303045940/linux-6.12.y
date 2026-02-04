@@ -236,6 +236,7 @@ static void print_buffer(unsigned char *buf, const struct rect *rect, unsigned c
 #endif
 
 unsigned char t_buf[sizeof(ram_buffer)] = { 0 };
+
 void transpose_buffer(unsigned char *buffer, const struct rect *rect)
 {
 	unsigned short i;

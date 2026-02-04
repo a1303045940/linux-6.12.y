@@ -1,6 +1,9 @@
 #ifndef __OPENVFD_DRV_H__
 #define __OPENVFD_DRV_H__
 
+#undef CONFIG_HAS_EARLYSUSPEND
+#undef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+
 #ifdef MODULE
 #include <linux/delay.h>
 #include <linux/slab.h>
@@ -12,7 +15,7 @@
 #if 0
 #define pr_dbg(args...) printk(KERN_ALERT "OpenVFD: " args)
 #else
-#define pr_dbg(args...)
+#define pr_dbg(args...) do { } while (0)
 #endif
 #endif
 

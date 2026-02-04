@@ -33,9 +33,6 @@
 #include <linux/fs.h>
 #include <linux/poll.h>
 #include <linux/gpio.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,8,0)
-#include <linux/gpio/driver.h>
-#endif
 #include <linux/of_gpio.h>
 #include "openvfd_drv.h"
 #include "controllers/controller_list.h"
@@ -43,12 +40,13 @@
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 static struct early_suspend openvfd_early_suspend;
-#elif defined(CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND) && CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+#elif defined(CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND)
 #include <linux/amlogic/pm.h>
 static struct early_suspend openvfd_early_suspend;
 #endif
 
 unsigned char vfd_display_auto_power = 1;
+static uint vfd_brightness = FD628_Brightness_8;
 
 static struct vfd_platform_data *pdata = NULL;
 struct kp {
@@ -92,12 +90,35 @@ static u_int32 FD628_GetKey(struct vfd_dev *dev)
 	return (FD628_KeyData);
 }
 
+static int unlocked_set_display_brightness(u_int8 new_brightness)
+{
+    int ret = controller->set_brightness_level(new_brightness);
+    if (!ret){
+        pr_info("OpenVFD: Can't set brightness to %d, %d\n", new_brightness, ret);
+        return ret;
+    }
+
+    pr_info("OpenVFD: Brightness is set to %d\n", new_brightness);
+    return 0;
+}
+
+static void locked_set_display_brightness(struct led_classdev *cdev,
+    enum led_brightness brightness)
+{
+    if(pdata == NULL)
+        return;
+
+    mutex_lock(&mutex);
+    unlocked_set_display_brightness(brightness);
+    mutex_unlock(&mutex);
+}
+
 static void unlocked_set_power(unsigned char state)
 {
 	if (vfd_display_auto_power && controller) {
 		controller->set_power(state);
 		if (state && pdata)
-			controller->set_brightness_level(pdata->dev->brightness);
+		    unlocked_set_display_brightness(pdata->dev->brightness);
 	}
 }
 
@@ -269,11 +290,6 @@ static ssize_t openvfd_dev_write(struct file *filp, const char __user * buf,
 	return status;
 }
 
-static int set_display_brightness(struct vfd_dev *dev, u_int8 new_brightness)
-{
-	return controller->set_brightness_level(new_brightness);
-}
-
 static void set_display_type(struct vfd_dev *dev, int new_display_type)
 {
 	memcpy(&dev->dtb_active.display, &new_display_type, sizeof(struct vfd_display));
@@ -343,7 +359,7 @@ static long openvfd_dev_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case VFD_IOC_SBRIGHT:
 		ret = __get_user(temp, (int __user *)arg);
-		if (!ret && !set_display_brightness(dev, (u_int8)temp))
+		if (!ret && !unlocked_set_display_brightness((u_int8)temp))
 			ret = -ERANGE;
 		break;
 	case VFD_IOC_GBRIGHT:
@@ -396,11 +412,10 @@ static int register_openvfd_driver(void)
 {
 	int ret = 0;
 	ret = misc_register(&openvfd_device);
-	if (ret) {
+	if (ret)
 		pr_dbg("%s: failed to add openvfd module\n", __func__);
-	} else {
+	else
 		pr_dbg("%s: Succeeded to add openvfd module \n", __func__);
-	}
 	return ret;
 }
 
@@ -418,17 +433,7 @@ static void deregister_openvfd_driver(void)
 #endif
 }
 
-
-static void openvfd_brightness_set(struct led_classdev *cdev,
-	enum led_brightness brightness)
-{
-	pr_info("brightness = %d\n", brightness);
-
-	if(pdata == NULL)
-		return;
-}
-
-static int led_cmd_ioc = 0;
+static unsigned int led_cmd_ioc = 0;
 
 static ssize_t led_cmd_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -460,19 +465,19 @@ static ssize_t led_cmd_store(struct device *_dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct vfd_dev *dev = pdata->dev;
-	int cmd, temp;
+	unsigned int cmd, temp;
 	led_cmd_ioc = 0;
 
-	if (size < 2*sizeof(int))
+	if (size < 2*sizeof(unsigned int))
 		return -EFAULT;
-	memcpy(&cmd, buf, sizeof(int));
+	memcpy(&cmd, buf, sizeof(unsigned int));
 	if (_IOC_TYPE(cmd) != VFD_IOC_MAGIC)
 		return -ENOTTY;
 	if (_IOC_NR(cmd) >= VFD_IOC_MAXNR)
 		return -ENOTTY;
 
-	buf += sizeof(int);
-	memcpy(&temp, buf, sizeof(int));
+	buf += sizeof(unsigned int);
+	memcpy(&temp, buf, sizeof(unsigned int));
 	mutex_lock(&mutex);
 	switch (cmd) {
 		case VFD_IOC_SMODE:
@@ -480,7 +485,7 @@ static ssize_t led_cmd_store(struct device *_dev,
 			//FD628_SET_DISPLAY_MODE(dev->mode, dev);
 			break;
 		case VFD_IOC_SBRIGHT:
-			if (!set_display_brightness(dev, (u_int8)temp))
+			if (!unlocked_set_display_brightness((u_int8)temp))
 				size = -ERANGE;
 			break;
 		case VFD_IOC_POWER:
@@ -490,7 +495,7 @@ static ssize_t led_cmd_store(struct device *_dev,
 			dev->status_led_mask = (u_int8)temp;
 			break;
 		case VFD_IOC_SDISPLAY_TYPE:
-			set_display_type(dev, temp);
+			set_display_type(dev, (int)temp);
 			break;
 		case VFD_IOC_SCHARS_ORDER:
 			if (size >= sizeof(dev->dtb_active.dat_index)+sizeof(int))
@@ -599,6 +604,7 @@ module_param_array(vfd_chars, uint, &vfd_chars_argc, 0000);
 module_param_array(vfd_dot_bits, uint, &vfd_dot_bits_argc, 0000);
 module_param_array(vfd_display_type, uint, &vfd_display_type_argc, 0000);
 module_param(vfd_display_auto_power, byte, 0000);
+module_param(vfd_brightness, uint, 0444);
 
 static void print_param_debug(const char *label, int argc, unsigned int param[])
 {
@@ -613,28 +619,28 @@ static void print_param_debug(const char *label, int argc, unsigned int param[])
 	pr_dbg2("%s\n", buffer);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,8,0)
-static int is_right_chip(struct gpio_chip *chip, void *data)
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
 static int is_right_chip(struct gpio_chip *chip, const void *data)
-#endif
+{
+	pr_dbg("is_right_chip %s | %s | %d\n", chip->label, (const char*)data, strcmp(data, chip->label));
+	if (strcmp((const char *)data, chip->label) == 0)
+		return 1;
+	return 0;
+}
+#else
+static int is_right_chip(struct gpio_chip *chip, void *data)
 {
 	pr_dbg("is_right_chip %s | %s | %d\n", chip->label, (char*)data, strcmp(data, chip->label));
 	if (strcmp(data, chip->label) == 0)
 		return 1;
 	return 0;
 }
+#endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,7,0)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,8,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
 static struct gpio_chip *gpiochip_find(void *data,
 				int (*match)(struct gpio_chip *gc,
-							 void *data))
-#else
-static struct gpio_chip *gpiochip_find(const void *data,
-				int (*match)(struct gpio_chip *gc,
 							 const void *data))
-#endif
 {
 	struct gpio_device *gdev;
 	struct gpio_chip *gc = NULL;
@@ -646,6 +652,22 @@ static struct gpio_chip *gpiochip_find(const void *data,
 	}
 
 	return gc;
+}
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6,7,0)
+static struct gpio_chip *gpiochip_find(void *data,
+                int (*match)(struct gpio_chip *gc,
+					         void *data))
+{
+    struct gpio_device *gdev;
+    struct gpio_chip *gc = NULL;
+
+    gdev = gpio_device_find(data, match);
+    if (gdev) {
+        gc = gpio_device_get_chip(gdev);
+        gpio_device_put(gdev);
+    }
+
+    return gc;
 }
 #endif
 
@@ -664,11 +686,7 @@ static int get_chip_pin_number(const unsigned int gpio[])
 	}
 
 	if (bank_name) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,8,0)
 		chip = gpiochip_find((char *)bank_name, is_right_chip);
-#else
-		chip = gpiochip_find(bank_name, is_right_chip);
-#endif
 		if (chip) {
 			if (chip->ngpio > gpio[1])
 				pin = chip->base + gpio[1];
@@ -699,11 +717,21 @@ static int evaluate_pin(const char *name, const unsigned int *vfd_arg, struct vf
 
 char gpio_chip_names[1024] = { 0 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,8,0)
-static int enum_gpio_chips(struct gpio_chip *chip, void *data)
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,9,0)
 static int enum_gpio_chips(struct gpio_chip *chip, const void *data)
-#endif
+{
+	static unsigned char first_iteration = 1;
+	const char *sep = ", ";
+	size_t str_len = strlen(gpio_chip_names);
+	if (first_iteration)
+		sep = "";
+	(void)data;
+	scnprintf(gpio_chip_names + str_len, sizeof(gpio_chip_names) - str_len, "%s%s", sep, chip->label);
+	first_iteration = 0;
+	return 0;
+}
+#else
+static int enum_gpio_chips(struct gpio_chip *chip, void *data)
 {
 	static unsigned char first_iteration = 1;
 	const char *sep = ", ";
@@ -714,6 +742,7 @@ static int enum_gpio_chips(struct gpio_chip *chip, const void *data)
 	first_iteration = 0;
 	return 0;
 }
+#endif
 
 static int verify_module_params(struct vfd_dev *dev)
 {
@@ -915,7 +944,7 @@ static int openvfd_driver_probe(struct platform_device *pdev)
 		goto get_gpio_req_fail;
 
 	pdata->dev->dtb_default = pdata->dev->dtb_active;
-	pdata->dev->brightness = 0xFF;
+	pdata->dev->brightness = vfd_brightness;
 
 	mutex_lock(&mutex);
 	register_openvfd_driver();
@@ -926,7 +955,9 @@ static int openvfd_driver_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	kp->cdev.name = DEV_NAME;
-	kp->cdev.brightness_set = openvfd_brightness_set;
+	kp->cdev.brightness_set = locked_set_display_brightness;
+	kp->cdev.max_brightness = FD628_Brightness_8;
+	kp->cdev.brightness = vfd_brightness;
 	ret = led_classdev_register(&pdev->dev, &kp->cdev);
 	if (ret < 0) {
 		kfree(kp);
@@ -992,7 +1023,11 @@ static int openvfd_driver_probe(struct platform_device *pdev)
 	return state;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,11,0)
 static void openvfd_driver_remove(struct platform_device *pdev)
+#else
+static int openvfd_driver_remove(struct platform_device *pdev)
+#endif
 {
 	set_power(0);
 #if defined(CONFIG_HAS_EARLYSUSPEND) || defined(CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND)
@@ -1018,6 +1053,9 @@ static void openvfd_driver_remove(struct platform_device *pdev)
 	kfree(pdata->dev);
 	kfree(pdata);
 	pdata = NULL;
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,11,0)
+	return 0;
 #endif
 }
 

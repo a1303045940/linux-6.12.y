@@ -25,4 +25,8 @@ struct controller_interface {
 	size_t (*write_display_data)(const struct vfd_display_data *data);
 };
 
+extern void transpose8rS64(unsigned char* A, unsigned char* B);
+
+extern size_t seg7_write_display_data(const struct vfd_display_data *data, unsigned short *raw_wdata, size_t sz);
+
 #endif

@@ -1,5 +1,6 @@
 #include "../protocols/i2c_sw.h"
 #include "fd650.h"
+#include "controller.h"
 
 /* ****************************** Define FD650 Commands ****************************** */
 #define FD650_KEY_RDCMD		0x4F	/* Read keys command			*/

@@ -1,6 +1,7 @@
 #include "../protocols/i2c_sw.h"
 #include "../protocols/spi_sw.h"
 #include "fd628.h"
+#include "controller.h"
 
 /* ****************************** Define FD628 Commands ****************************** */
 #define FD628_KEY_RDCMD		0x42	/* Read keys command			*/
@@ -286,8 +287,6 @@ static size_t fd628_read_data(unsigned char *data, size_t length)
 	protocol->write_byte(FD628_KEY_RDCMD);
 	return protocol->read_data(data, length) == 0 ? length : -1;
 }
-
-extern void transpose8rS64(unsigned char* A, unsigned char* B);
 
 static size_t fd628_write_data(const unsigned char *_data, size_t length)
 {
